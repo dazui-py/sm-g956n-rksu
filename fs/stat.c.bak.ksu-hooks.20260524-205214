@@ -14,12 +14,30 @@
 #include <linux/security.h>
 #include <linux/syscalls.h>
 #include <linux/pagemap.h>
+#if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MOUNT)
+#include <linux/susfs_def.h>
+#endif
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
 
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+extern void susfs_sus_ino_for_generic_fillattr(unsigned long ino, struct kstat *stat);
+#endif
+
 void generic_fillattr(struct inode *inode, struct kstat *stat)
 {
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+	if (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) &&
+			unlikely(inode->i_state & INODE_STATE_SUS_KSTAT)) {
+		susfs_sus_ino_for_generic_fillattr(inode->i_ino, stat);
+		stat->mode = inode->i_mode;
+		stat->rdev = inode->i_rdev;
+		stat->uid = inode->i_uid;
+		stat->gid = inode->i_gid;
+		return;
+	}
+#endif
 	stat->dev = inode->i_sb->s_dev;
 	stat->ino = inode->i_ino;
 	stat->mode = inode->i_mode;
@@ -33,16 +51,9 @@ void generic_fillattr(struct inode *inode, struct kstat *stat)
 	stat->ctime = inode->i_ctime;
 	stat->blksize = i_blocksize(inode);
 	stat->blocks = inode->i_blocks;
-#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-	susfs_sus_kstat_spoof_generic_fillattr(inode, stat);
-#endif
 }
 
 EXPORT_SYMBOL(generic_fillattr);
-
-#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode *inode, struct kstat *stat);
-#endif
 
 /**
  * vfs_getattr_nosec - getattr without security checks
@@ -61,16 +72,7 @@ int vfs_getattr_nosec(struct path *path, struct kstat *stat)
 	struct inode *inode = d_backing_inode(path->dentry);
 
 	if (inode->i_op->getattr)
-#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-	{
-		int err = inode->i_op->getattr(path->mnt, path->dentry, stat);
-		if (!err)
-			susfs_sus_kstat_spoof_generic_fillattr(inode, stat);
-		return err;
-	}
-#else
 		return inode->i_op->getattr(path->mnt, path->dentry, stat);
-#endif
 
 	generic_fillattr(inode, stat);
 	return 0;
@@ -103,10 +105,6 @@ int vfs_fstat(unsigned int fd, struct kstat *stat)
 }
 EXPORT_SYMBOL(vfs_fstat);
 
-#ifdef CONFIG_KSU
-extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
-#endif
-
 int vfs_fstatat(int dfd, const char __user *filename, struct kstat *stat,
 		int flag)
 {
@@ -114,10 +112,6 @@ int vfs_fstatat(int dfd, const char __user *filename, struct kstat *stat,
 	int error = -EINVAL;
 	unsigned int lookup_flags = 0;
 
-
-#ifdef CONFIG_KSU
-	ksu_handle_stat(&dfd, &filename, &flag);
-#endif
 	if ((flag & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |
 		      AT_EMPTY_PATH)) != 0)
 		goto out;

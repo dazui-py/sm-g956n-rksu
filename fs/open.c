@@ -364,10 +364,12 @@ SYSCALL_DEFINE4(fallocate, int, fd, int, mode, loff_t, offset, loff_t, len)
  * We do this by temporarily clearing all FS-related capabilities and
  * switching the fsuid/fsgid around to the real ones.
  */
-#ifdef CONFIG_KSU
-extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,
-			 int *flags);
+#ifdef CONFIG_KSU_MANUAL_HOOK
+__attribute__((hot))
+extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,
+				int *mode, int *flags);
 #endif
+
 SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)
 {
 	const struct cred *old_cred;
@@ -378,10 +380,9 @@ SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)
 	int res;
 	unsigned int lookup_flags = LOOKUP_FOLLOW;
 
-#ifdef CONFIG_KSU
+#ifdef CONFIG_KSU_MANUAL_HOOK
 	ksu_handle_faccessat(&dfd, &filename, &mode, NULL);
 #endif
-
 	if (mode & ~S_IRWXO)	/* where's F_OK, X_OK, W_OK, R_OK? */
 		return -EINVAL;
 
@@ -1066,19 +1067,11 @@ struct file *filp_clone_open(struct file *oldfile)
 }
 EXPORT_SYMBOL(filp_clone_open);
 
-#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-extern struct filename *susfs_open_redirect_spoof_do_sys_openat(struct inode *inode);
-#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-
 long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 {
 	struct open_flags op;
 	int fd = build_open_flags(flags, mode, &op);
 	struct filename *tmp;
-#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-	struct filename *fake_filename = NULL;
-	bool is_inode_open_redirect = false;
-#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
 
 	if (fd)
 		return fd;

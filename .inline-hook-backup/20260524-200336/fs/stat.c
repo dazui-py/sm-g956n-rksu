@@ -33,9 +33,16 @@ void generic_fillattr(struct inode *inode, struct kstat *stat)
 	stat->ctime = inode->i_ctime;
 	stat->blksize = i_blocksize(inode);
 	stat->blocks = inode->i_blocks;
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+	susfs_sus_kstat_spoof_generic_fillattr(inode, stat);
+#endif
 }
 
 EXPORT_SYMBOL(generic_fillattr);
+
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode *inode, struct kstat *stat);
+#endif
 
 /**
  * vfs_getattr_nosec - getattr without security checks
@@ -54,7 +61,16 @@ int vfs_getattr_nosec(struct path *path, struct kstat *stat)
 	struct inode *inode = d_backing_inode(path->dentry);
 
 	if (inode->i_op->getattr)
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+	{
+		int err = inode->i_op->getattr(path->mnt, path->dentry, stat);
+		if (!err)
+			susfs_sus_kstat_spoof_generic_fillattr(inode, stat);
+		return err;
+	}
+#else
 		return inode->i_op->getattr(path->mnt, path->dentry, stat);
+#endif
 
 	generic_fillattr(inode, stat);
 	return 0;
@@ -302,6 +318,9 @@ SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,
 	struct kstat stat;
 	int error;
 
+#ifdef CONFIG_KSU_MANUAL_HOOK
+	ksu_handle_stat(&dfd, &filename, &flag);
+#endif
 	error = vfs_fstatat(dfd, filename, &stat, flag);
 	if (error)
 		return error;
@@ -316,6 +335,9 @@ SYSCALL_DEFINE2(newfstat, unsigned int, fd, struct stat __user *, statbuf)
 
 	if (!error)
 		error = cp_new_stat(&stat, statbuf);
+#ifdef CONFIG_KSU_MANUAL_HOOK
+	ksu_handle_newfstat_ret(&fd, &statbuf);
+#endif
 
 	return error;
 }
@@ -434,6 +456,9 @@ SYSCALL_DEFINE2(fstat64, unsigned long, fd, struct stat64 __user *, statbuf)
 
 	if (!error)
 		error = cp_new_stat64(&stat, statbuf);
+#ifdef CONFIG_KSU_MANUAL_HOOK
+	ksu_handle_fstat64_ret(&fd, &statbuf);
+#endif
 
 	return error;
 }
@@ -444,6 +469,9 @@ SYSCALL_DEFINE4(fstatat64, int, dfd, const char __user *, filename,
 	struct kstat stat;
 	int error;
 
+#ifdef CONFIG_KSU_MANUAL_HOOK
+	ksu_handle_stat(&dfd, &filename, &flag);
+#endif
 	error = vfs_fstatat(dfd, filename, &stat, flag);
 	if (error)
 		return error;
