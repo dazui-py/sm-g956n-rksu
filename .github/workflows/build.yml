@@ -1,0 +1,186 @@
+name: Build Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      BRANCH:
+        description: Kernel branch
+        required: true
+        default: main
+
+      KSU:
+        description: Apply KernelSU hooks
+        required: false
+        default: false
+        type: boolean
+
+      SILENT_BUILD:
+        description: Silent build logs
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            bc \
+            bison \
+            build-essential \
+            cpio \
+            flex \
+            git \
+            kmod \
+            libelf-dev \
+            libssl-dev \
+            lz4 \
+            make \
+            openssl \
+            perl \
+            python-is-python3 \
+            python3 \
+            tar \
+            unzip \
+            wget \
+            zip
+
+      - name: Clone kernel repo
+        run: |
+          git clone \
+            --depth=1 \
+            --branch "${{ inputs.BRANCH }}" \
+            https://github.com/dazui-py/sm-g956n-ksun.git
+
+          cd sm-g956n-ksun
+
+          echo "KERNEL_ROOT=$(pwd)" >> "$GITHUB_ENV"
+          echo "Cloned kernel repo at: $(pwd)"
+          git remote -v
+          git branch --show-current
+          git rev-parse --short HEAD
+
+      - name: Prepare build script
+        run: |
+          cd "$KERNEL_ROOT"
+
+          chmod +x build_kernel.sh
+
+          sed -i 's|make -j64|make -j$(nproc --all)|' build_kernel.sh
+
+          echo "==== build_kernel.sh ===="
+          cat build_kernel.sh
+
+      - name: Fix DTC yylloc build error
+        run: |
+         cd "$KERNEL_ROOT"
+
+         sed -i '/YYLTYPE yylloc;/d' scripts/dtc/dtc-lexer.lex.c_shipped || true
+         sed -i '/YYLTYPE yylloc;/d' scripts/dtc/dtc-lexer.lex.c || true
+
+      - name: Apply KernelSU hooks
+        if: ${{ inputs.KSU }}
+        run: |
+          cd "$KERNEL_ROOT"
+
+          if [ -f apply_ksu_hooks.py ]; then
+            python3 apply_ksu_hooks.py
+          else
+            echo "apply_ksu_hooks.py not found"
+            exit 1
+          fi
+
+      - name: Build kernel
+        run: |
+          cd "$KERNEL_ROOT"
+          set -e
+
+          if [ "${{ inputs.SILENT_BUILD }}" = "true" ]; then
+            ./build_kernel.sh > build.log 2>&1
+          else
+            ./build_kernel.sh 2>&1 | tee build.log
+          fi
+
+      - name: Create build details
+        if: always()
+        run: |
+          cd "$KERNEL_ROOT"
+
+          BUILD_NAME="SM-G965N-star2ltekor-$(git rev-parse --short HEAD)-$(date +'%Y%m%d%H%M%S')"
+          echo "BUILD_NAME=$BUILD_NAME" >> "$GITHUB_ENV"
+
+          {
+            echo "Device: SM-G965N"
+            echo "Codename: star2ltekor"
+            echo "Defconfig: exynos9810-star2ltekor_defconfig"
+            echo "Android major version: q"
+            echo "KernelSU hooks: ${{ inputs.KSU }}"
+            echo "Repo: https://github.com/dazui-py/sm-g956n-ksun.git"
+            echo "Branch: ${{ inputs.BRANCH }}"
+            echo "Commit: $(git rev-parse --short HEAD)"
+            echo "Date: $(date)"
+            echo "Kernel root: $KERNEL_ROOT"
+          } > buildDetails.txt
+
+          if [ -f .config ]; then
+            cp .config build_config.txt
+          fi
+
+      - name: Upload config and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Config-${{ env.BUILD_NAME }}
+          path: |
+            sm-g956n-ksun/.config
+            sm-g956n-ksun/build_config.txt
+            sm-g956n-ksun/buildDetails.txt
+            sm-g956n-ksun/build.log
+          if-no-files-found: warn
+
+      - name: Upload kernel artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kernel-${{ env.BUILD_NAME }}
+          path: |
+            sm-g956n-ksun/arch/arm64/boot/Image
+            sm-g956n-ksun/arch/arm64/boot/Image.gz
+            sm-g956n-ksun/arch/arm64/boot/Image.gz-dtb
+            sm-g956n-ksun/arch/arm64/boot/dts/exynos/*.dtb
+            sm-g956n-ksun/arch/arm64/boot/dts/exynos/*.dtbo
+          if-no-files-found: warn
+          compression-level: 9
+
+      - name: Strip modules
+        if: always()
+        continue-on-error: true
+        run: |
+          cd "$KERNEL_ROOT"
+
+          mkdir -p kernel_modules
+          find . -type f -name "*.ko" -exec cp {} kernel_modules/ \;
+
+          STRIP="$KERNEL_ROOT/toolchain/gcc-cfp/gcc-ibv-jopp/aarch64-linux-android-4.9/bin/aarch64-linux-android-strip"
+
+          if find kernel_modules -name "*.ko" | grep -q .; then
+            for ko in kernel_modules/*.ko; do
+              echo "Stripping $(basename "$ko")"
+              "$STRIP" --strip-unneeded "$ko" || true
+            done
+          else
+            echo "No modules found"
+          fi
+
+      - name: Upload modules
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Modules-${{ env.BUILD_NAME }}
+          path: sm-g956n-ksun/kernel_modules/*
+          if-no-files-found: warn
+          compression-level: 9
