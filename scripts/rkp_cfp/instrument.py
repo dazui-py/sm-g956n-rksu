@@ -1228,11 +1228,18 @@ def to_twos_compl(x, nbits):
     return x
 
 def byte_string(xs):
-    if type(xs) == list:
-        return ''.join(xs)
-    elif type(xs) in [int, long]:
-        return ''.join([chr((xs >> 8*i) & 0xff) for i in xrange(3, -1, 0-1)])
-    return xs
+    if isinstance(xs, bytes):
+        return xs
+    if isinstance(xs, bytearray):
+        return bytes(xs)
+    if isinstance(xs, str):
+        return xs.encode("latin-1")
+
+    try:
+        return bytes(xs)
+    except TypeError:
+        return ''.join(xs).encode("latin-1")
+
 def hexint(b):
     return int(binascii.hexlify(byte_string(b)), 16)
 def mask_shift(insn, mask, shift):
