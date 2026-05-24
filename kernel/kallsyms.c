@@ -24,6 +24,9 @@
 #include <linux/ctype.h>
 #include <linux/slab.h>
 #include <linux/compiler.h>
+#ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+#include <linux/susfs_def.h>
+#endif
 #ifdef CONFIG_SEC_DUMP_SUMMARY
 #include <linux/sec_debug.h>
 #endif

@@ -111,6 +111,54 @@ static void inotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
 		 * used only internally to the kernel.
 		 */
 		u32 mask = mark->mask & IN_ALL_EVENTS;
+		#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+		mnt = real_mount(file->f_path.mnt);
+		if (mnt->mnt_id >= DEFAULT_KSU_MNT_ID &&
+			likely(susfs_is_current_proc_umounted()))
+		{
+			struct path path;
+			char *pathname = kmalloc(PAGE_SIZE, GFP_KERNEL);
+			char *dpath;
+
+			if (!pathname) {
+				goto orig_flow;
+			}
+
+			dpath = d_path(&file->f_path, pathname, PAGE_SIZE);
+			if (IS_ERR(dpath)) {
+				goto out_kfree;
+			}
+
+			if (kern_path(dpath, 0, &path)) {
+				goto out_kfree;
+			}
+
+			if (!path.dentry->d_inode) {
+				goto out_path_put;
+			}
+
+			seq_printf(m, "inotify wd:%x ino:%lx sdev:%x mask:%x ignored_mask:%x ",
+				   inode_mark->wd,
+				   path.dentry->d_inode->i_ino,
+				   path.dentry->d_inode->i_sb->s_dev,
+				   mask,
+				   mark->ignored_mask);
+			show_mark_fhandle(m, path.dentry->d_inode);
+			seq_putc(m, '\n');
+
+			path_put(&path);
+			kfree(pathname);
+			iput(inode);
+			return;
+
+out_path_put:
+			path_put(&path);
+out_kfree:
+			kfree(pathname);
+		}
+orig_flow:
+#endif
+
 		seq_printf(m, "inotify wd:%x ino:%lx sdev:%x mask:%x ignored_mask:%x ",
 			   inode_mark->wd, inode->i_ino, inode->i_sb->s_dev,
 			   mask, mark->ignored_mask);
