@@ -104,6 +104,12 @@ jobs:
             exit 1
           fi
 
+      - name: Convert Samsung RKP CFP scripts to Python 3
+         run: |
+           cd "$KERNEL_ROOT"
+           python3 -m lib2to3 -w scripts/rkp_cfp
+           grep -RsnE '^[[:space:]]*print [^(\n]' scripts/rkp_cfp || true
+
       - name: Build kernel
         run: |
           cd "$KERNEL_ROOT"
