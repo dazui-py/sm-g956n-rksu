@@ -99,7 +99,6 @@ static void inotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
 		return;
 
 	inode_mark = container_of(mark, struct inotify_inode_mark, fsn_mark);
-	unsigned int mask = mark->mask;
 	inode = igrab(mark->inode);
 	if (inode) {
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
