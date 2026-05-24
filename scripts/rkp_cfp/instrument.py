@@ -16,6 +16,27 @@
 
 import argparse
 import subprocess
+
+# ---- Python 3 compatibility for old Samsung RKP_CFP script ----
+def _rkp_cfp_text(x):
+    if isinstance(x, bytes):
+        return x.decode("utf-8", "replace")
+    return x
+
+_rkp_cfp_orig_check_output = subprocess.check_output
+def _rkp_cfp_check_output_text(*args, **kwargs):
+    kwargs.setdefault("universal_newlines", True)
+    return _rkp_cfp_orig_check_output(*args, **kwargs)
+subprocess.check_output = _rkp_cfp_check_output_text
+
+_rkp_cfp_orig_popen = subprocess.Popen
+def _rkp_cfp_popen_text(*args, **kwargs):
+    if kwargs.get("stdout") == subprocess.PIPE or kwargs.get("stderr") == subprocess.PIPE:
+        kwargs.setdefault("universal_newlines", True)
+    return _rkp_cfp_orig_popen(*args, **kwargs)
+subprocess.Popen = _rkp_cfp_popen_text
+# ---- end Python 3 compatibility ----
+
 import common
 import os
 import re
@@ -1042,6 +1063,7 @@ def parse_sections(vmlinux):
         except StopIteration:
             break
 
+        line = _rkp_cfp_text(line)
         m = re.search(r'^Sections:', line)
         if m:
             # first section
