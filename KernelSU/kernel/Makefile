@@ -12,7 +12,7 @@ endif
 $(info -- KernelSU: Multi-managers: RKSU, MKSU, Official KernelSU, KowSU, KSUN, WKSU)
 ccflags-y += -I$(KSU_KERNEL_DIR) -I$(KSU_KERNEL_DIR)/include
 
-ccflags-y += -DKSU_VERSION=32473
+ccflags-y += -DKSU_VERSION=32448
 
 ifeq ($(shell grep -q " current_sid(void)" $(srctree)/security/selinux/include/objsec.h; echo $$?),0)
 ccflags-y += -DKSU_COMPAT_HAS_CURRENT_SID
