@@ -5,11 +5,11 @@ plugins {
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.lsplugin.apksign)
+    alias(libs.plugins.aboutLibraries)
     id("kotlin-parcelize")
 }
 
 val androidCompileSdkVersion: Int by rootProject.extra
-val androidCompileSdkVersionMinor: Int by rootProject.extra
 val androidCompileNdkVersion: String by rootProject.extra
 val androidBuildToolsVersion: String by rootProject.extra
 val androidMinSdkVersion: Int by rootProject.extra
@@ -33,9 +33,11 @@ val baseCFlags = listOf(
 )
 val baseCppFlags = baseCFlags + "-fno-rtti"
 
+val isReleaseTask =
+    project.gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
+
 android {
-    namespace = "me.weishu.kernelsu"
-    val isPrBuild = project.findProperty("IS_PR_BUILD")?.toString()?.toBoolean() ?: false
+    namespace = "com.resukisu.resukisu"
 
     buildTypes {
         debug {
@@ -49,7 +51,6 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             vcsInfo.include = false
-            if (isPrBuild) applicationIdSuffix = ".dev"
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             externalNativeBuild {
                 cmake {
@@ -83,12 +84,17 @@ android {
     }
 
     packaging {
-        dex {
-            useLegacyPackaging = true
-        }
         jniLibs {
             useLegacyPackaging = true
-            excludes += "lib/*/libandroidx.graphics.path.so"
+        }
+        resources {
+            // https://stackoverflow.com/a/58956288
+            // It will break Layout Inspector, but it's unused for release build.
+            excludes += "META-INF/*.version"
+            // https://github.com/Kotlin/kotlinx.coroutines?tab=readme-ov-file#avoiding-including-the-debug-infrastructure-in-the-resulting-apk
+            excludes += "DebugProbesKt.bin"
+            // https://issueantenna.com/repo/kotlin/kotlinx.coroutines/issues/3158
+            excludes += "kotlin-tooling-metadata.json"
         }
     }
 
@@ -106,14 +112,10 @@ android {
     androidResources {
         generateLocaleConfig = true
     }
-    compileSdk {
-        version =
-            release(androidCompileSdkVersion) {
-                minorApiLevel = androidCompileSdkVersionMinor
-            }
-    }
-    buildToolsVersion = androidBuildToolsVersion
+
+    compileSdk = androidCompileSdkVersion
     ndkVersion = androidCompileNdkVersion
+    buildToolsVersion = androidBuildToolsVersion
 
     defaultConfig {
         minSdk = androidMinSdkVersion
@@ -121,6 +123,7 @@ android {
         versionCode = managerVersionCode
         versionName = managerVersionName
 
+        val isPrBuild = project.findProperty("IS_PR_BUILD")?.toString()?.toBoolean() ?: false
         buildConfigField("boolean", "IS_PR_BUILD", isPrBuild.toString())
 
         externalNativeBuild {
@@ -132,7 +135,16 @@ android {
         }
 
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            abiFilters += listOf("arm64-v8a", "x86_64", "armeabi-v7a")
+        }
+    }
+
+    splits {
+        abi {
+            isEnable = isReleaseTask
+            reset()
+            include("arm64-v8a", "x86_64", "armeabi-v7a")
+            isUniversalApk = true
         }
     }
 
@@ -147,19 +159,27 @@ android {
     }
 }
 
-androidComponents {
-    onVariants(selector().withBuildType("release")) {
-        it.packaging.resources.excludes.addAll(listOf("META-INF/**", "kotlin/**", "**.bin"))
-    }
-}
-
 base {
     archivesName.set(
-        "KernelSU_${managerVersionName}_${managerVersionCode}"
+        "ReSukiSU_${managerVersionName}_${managerVersionCode}"
     )
 }
 
+configurations.all {
+    exclude(group = "androidx.navigationevent", module = "navigationevent-compose")
+}
+
+aboutLibraries {
+    library {
+        // Enable the duplication mode, allows to merge, or link dependencies which relate
+        duplicationMode = com.mikepenz.aboutlibraries.plugin.DuplicateMode.MERGE
+        // Configure the duplication rule, to match "duplicates" with
+        duplicationRule = com.mikepenz.aboutlibraries.plugin.DuplicateRule.SIMPLE
+    }
+}
+
 dependencies {
+    implementation(libs.gson)
     implementation(libs.androidx.activity.compose)
 
     implementation(platform(libs.androidx.compose.bom))
@@ -167,7 +187,11 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.androidx.foundation)
+    implementation(libs.androidx.documentfile)
+    implementation(libs.androidx.compose.foundation)
 
+    implementation(libs.androidx.compose.runtime.tracing)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
@@ -177,41 +201,41 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.navigation3)
 
     implementation(libs.androidx.navigation3.runtime)
-    implementation(libs.androidx.navigationevent.compose)
+    implementation(libs.miuix.blur)
+    implementation(libs.miuix.navigation)
+    implementation(libs.androidx.navigationevent) {
+        exclude(group = "androidx.navigation", module = "navigationevent-compose")
+    }
+
+    implementation(libs.aboutlibraries.core)
+    implementation(libs.aboutlibraries.compose.m3)
 
     implementation(libs.com.github.topjohnwu.libsu.core)
     implementation(libs.com.github.topjohnwu.libsu.service)
     implementation(libs.com.github.topjohnwu.libsu.io)
 
+    implementation(libs.m3color)
+    implementation(libs.capsule)
+
     implementation(libs.dev.rikka.rikkax.parcelablelist)
+
+    implementation(libs.io.coil.kt.coil.compose)
 
     implementation(libs.kotlinx.coroutines.core)
 
-    implementation(libs.commonmark)
-    implementation(libs.commonmark.ext.gfm.tables)
-    implementation(libs.commonmark.ext.gfm.strikethrough)
-    implementation(libs.commonmark.ext.autolink)
-    implementation(libs.commonmark.ext.task.list.items)
+    implementation(libs.me.zhanghai.android.appiconloader.coil)
 
+    implementation(libs.sheet.compose.dialogs.core)
+    implementation(libs.sheet.compose.dialogs.list)
+    implementation(libs.sheet.compose.dialogs.input)
+
+    implementation(libs.markdown)
     implementation(libs.androidx.webkit)
 
     implementation(libs.lsposed.cxx)
 
-    implementation(libs.hiddenapibypass)
+    implementation(libs.com.github.topjohnwu.libsu.core)
 
-    implementation(libs.miuix.ui)
-    implementation(libs.miuix.icons)
-    implementation(libs.miuix.navigation3.ui)
-    implementation(libs.miuix.preference)
-    implementation(libs.miuix.blur)
-    implementation(libs.miuix.shapes)
+    implementation(libs.accompanist.drawablepainter)
 
-    implementation(platform(libs.okhttp.bom))
-    implementation(libs.okhttp)
-
-    implementation(libs.backdrop)
-
-    implementation(libs.material.kolor)
-
-    implementation(libs.appiconloader)
 }

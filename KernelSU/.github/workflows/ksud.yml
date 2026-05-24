@@ -5,17 +5,27 @@ on:
       target:
         required: true
         type: string
+      os:
+        required: false
+        type: string
+        default: ubuntu-latest
       pack_lkm:
         required: false
         type: boolean
-        default: false
+        default: true
       pack_ksuinit:
         required: false
         type: boolean
-        default: false
+        default: true
+      use_cache:
+        required: false
+        type: boolean
+        default: true
+env:
+  CARGO_TERM_COLOR: always
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.os }}
     steps:
     - uses: actions/checkout@v6
       with:
@@ -24,7 +34,7 @@ jobs:
     - name: Download artifacts
       uses: actions/download-artifact@v8
     
-    - name: Prepare LKM files
+    - name: Prepare LKM fies
       if: ${{ inputs.pack_lkm }}
       run: |
         cp android*-lkm/*_kernelsu.ko ./userspace/ksud/bin/aarch64/
@@ -33,31 +43,31 @@ jobs:
       if: ${{ inputs.pack_ksuinit }}
       run: |
         mv ksuinit/*/release/ksuinit ./userspace/ksud/bin/aarch64/
+     
+    - name: Setup Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: nightly
+        targets: ${{ inputs.target }}
+        components: rust-src
         
-    - name: Setup rustup
-      run: |
-        rustup update stable
-        rustup target add ${{ inputs.target }}
-
     - uses: Swatinem/rust-cache@v2
+      if: github.event_name != 'pull_request'
       with:
+        prefix-key: ksud-${{ inputs.target }}
         workspaces: userspace/ksud
-        cache-targets: false
-
-    - uses: nttld/setup-ndk@v1
-      id: setup-ndk
-      with:
-        ndk-version: r29
-
+        cache-targets: true
+        
+    - name: Setup cargo-ndk
+      run: cargo install cargo-ndk --locked
+        
     - name: Build ksud
-      env:
-        ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
       run: |
-        source .github/scripts/setup-rust-build.sh ${{ inputs.target }} 26
-        cargo build --target $TRIPLE --release --manifest-path ./userspace/ksud/Cargo.toml
+        cd userspace/ksud/
+        cargo ndk b -t ${{ inputs.target }} -r -Z build-std=std,core,panic_abort -Z build-std-features="optimize_for_size" -Z trim-paths
 
     - name: Upload ksud artifact
       uses: actions/upload-artifact@v7
       with:
         name: ksud-${{ inputs.target }}
-        path: target/${{ inputs.target }}/release/ksud
+        path: userspace/ksud/target/**/release/ksud*

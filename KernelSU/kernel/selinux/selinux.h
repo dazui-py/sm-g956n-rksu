@@ -1,6 +1,10 @@
 #ifndef __KSU_H_SELINUX
 #define __KSU_H_SELINUX
 
+#include "linux/types.h"
+#include "linux/version.h"
+#include "linux/cred.h"
+
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)) || defined(KSU_COMPAT_HAS_SELINUX_STATE)
 #define KSU_COMPAT_USE_SELINUX_STATE
 #endif
@@ -17,7 +21,7 @@ void setup_selinux(const char *, struct cred *);
 
 void setenforce(bool);
 
-bool getenforce();
+bool getenforce(void);
 
 void cache_sid(void);
 
@@ -33,8 +37,24 @@ void apply_kernelsu_rules(void);
 
 int handle_sepolicy(void __user *user_data, u64 data_len);
 
-void setup_ksu_cred(void);
+void setup_ksu_cred_selinux(void);
+
+bool ksu_is_sid_equal(const struct cred *cred, u32 sid2);
+void ksu_set_zygote_sid(void);
+
+#ifdef CONFIG_KSU_SUSFS
+u32 susfs_get_sid_from_name(const char *secctx_name);
+u32 susfs_get_current_sid(void);
+bool susfs_is_current_zygote_domain(void);
+void susfs_set_ksu_sid(void);
+bool susfs_is_current_ksu_domain(void);
+void susfs_set_init_sid(void);
+bool susfs_is_current_init_domain(void);
+void susfs_set_priv_app_sid(void);
+#endif // #ifdef CONFIG_KSU_SUSFS
 
 void escape_to_root_for_adb_root();
+
+extern u32 ksu_file_sid;
 
 #endif

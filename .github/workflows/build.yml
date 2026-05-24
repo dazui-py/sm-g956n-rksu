@@ -54,7 +54,7 @@ jobs:
           git clone \
             --depth=1 \
             --branch "${{ inputs.BRANCH }}" \
-            https://github.com/dazui-py/sm-g956n-ksun.git
+            https://github.com/dazui-py/sm-g956n-rksu.git
 
           cd sm-g956n-ksun
 
@@ -63,6 +63,16 @@ jobs:
           git remote -v
           git branch --show-current
           git rev-parse --short HEAD
+
+      - name: Fix KSU version check
+        run: |
+           cd "$KERNEL_ROOT"
+
+           if [ -e "$KERNEL_ROOT/KernelSU/.git-ignore-until-build" ] && [ ! -e "$KERNEL_ROOT/KernelSU/.git" ]; then
+             mv "$KERNEL_ROOT/KernelSU/.git-ignore-until-build" "$KERNEL_ROOT/KernelSU/.git"
+           fi
+
+           ls -la "$KERNEL_ROOT/KernelSU" | head
 
       - name: Prepare build script
         run: |

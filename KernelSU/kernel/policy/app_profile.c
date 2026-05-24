@@ -1,12 +1,46 @@
+#include <linux/version.h>
+#include <linux/capability.h>
+#include <linux/cred.h>
+#include <linux/err.h>
+#include <linux/fdtable.h>
+#include <linux/file.h>
+#include <linux/fs.h>
+#include <linux/pid.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+// https://github.com/torvalds/linux/commit/8703e8a465b1e9cadc3680b4b1248f5987e54518
+#include <linux/sched/user.h>
+#include <linux/sched/task.h>
+#endif
+#include <linux/sched.h>
+#include <linux/seccomp.h>
+#include <linux/thread_info.h>
+#include <linux/uidgid.h>
+#include <linux/syscalls.h>
+#include "objsec.h"
+#include <linux/spinlock.h>
+#include <linux/tty.h>
+#include <linux/security.h>
+
+#include "policy/allowlist.h"
+#include "policy/app_profile.h"
+#include "arch.h"
+#include "compat/kernel_compat.h"
+#include "klog.h" // IWYU pragma: keep
+#include "selinux/selinux.h"
+#include "infra/su_mount_ns.h"
+#ifdef CONFIG_KSU_TRACEPOINT_HOOK
+#include "hook/tp_marker.h"
+#endif
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
 static struct group_info root_groups = { .usage = REFCOUNT_INIT(2) };
 #else
 static struct group_info root_groups = { .usage = ATOMIC_INIT(2) };
 #endif
 
-void setup_groups(struct root_profile *profile, struct cred *cred)
+static void setup_groups(struct root_profile *profile, struct cred *cred)
 {
-    if (unlikely(profile->groups_count > KSU_MAX_GROUPS)) {
+    if (profile->groups_count > KSU_MAX_GROUPS) {
         pr_warn("Failed to setgroups, too large group: %d!\n", profile->uid);
         return;
     }
@@ -47,18 +81,15 @@ void setup_groups(struct root_profile *profile, struct cred *cred)
     put_group_info(group_info);
 }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0) || defined(KSU_OPTIONAL_SECCOMP_FILTER_RELEASE))
-void seccomp_filter_release(struct task_struct *tsk);
-#define KSU_HAS_SECCOMP_FILTER_RELEASE
-#endif
-
-static void disable_seccomp(void)
+// https://github.com/rsuntk/KernelSU/blob/af9072e19d125a94797ae3c473e7e94c3d8c1bcc/kernel/app_profile.c#L79
+void disable_seccomp(void)
 {
-    if (!!!current->seccomp.mode) {
+    // https://github.com/backslashxx/KernelSU/tree/e28930645e764b9f0e5d0d1b0d5e236464939075/kernel/app_profile.c
+    if (!current->seccomp.mode) {
         return;
     }
 
-#ifdef KSU_HAS_SECCOMP_FILTER_RELEASE
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0) || defined(KSU_OPTIONAL_SECCOMP_FILTER_RELEASE))
     struct task_struct *fake;
     fake = kmalloc(sizeof(*fake), GFP_ATOMIC);
     if (!fake) {
@@ -77,11 +108,11 @@ static void disable_seccomp(void)
     clear_thread_flag(TIF_SECCOMP);
 #endif
 
-#ifdef KSU_HAS_SECCOMP_FILTER_RELEASE
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0) || defined(KSU_OPTIONAL_SECCOMP_FILTER_RELEASE))
     memcpy(fake, current, sizeof(*fake));
 #endif
     current->seccomp.mode = 0;
-#ifndef KSU_HAS_SECCOMP_FILTER_RELEASE
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0) && !defined(KSU_OPTIONAL_SECCOMP_FILTER_RELEASE))
     // put_seccomp_filter is allowed while we holding sighand
     put_seccomp_filter(current);
 #endif
@@ -91,7 +122,7 @@ static void disable_seccomp(void)
 #endif
     spin_unlock_irq(&current->sighand->siglock);
 
-#ifdef KSU_HAS_SECCOMP_FILTER_RELEASE
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0) || defined(KSU_OPTIONAL_SECCOMP_FILTER_RELEASE))
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0)
     // https://github.com/torvalds/linux/commit/bfafe5efa9754ebc991750da0bcca2a6694f3ed3#diff-45eb79a57536d8eccfc1436932f093eb5c0b60d9361c39edb46581ad313e8987R576-R577
     fake->flags |= PF_EXITING;
@@ -108,6 +139,9 @@ int escape_with_root_profile(void)
 {
     int ret = 0;
     struct cred *cred;
+    // a bit useless, but we just want less ifdefs
+    struct task_struct *p = current;
+    struct task_struct *t;
     struct root_profile *profile = NULL;
     struct user_struct *new_user;
 
@@ -117,22 +151,22 @@ int escape_with_root_profile(void)
         return -ENOMEM;
     }
 
-    if (cred->euid.val == 0) {
+    if (ksu_get_uid_t(current_euid()) == 0) {
         pr_warn("Already root, don't escape!\n");
         goto out_abort_creds;
     }
 
-    profile = ksu_get_root_profile(cred->uid.val);
+    profile = ksu_get_root_profile(ksu_get_uid_t(cred->uid));
 
-    cred->uid.val = profile->uid;
-    cred->suid.val = profile->uid;
-    cred->euid.val = profile->uid;
-    cred->fsuid.val = profile->uid;
+    ksu_get_uid_t(cred->uid) = profile->uid;
+    ksu_get_uid_t(cred->suid) = profile->uid;
+    ksu_get_uid_t(cred->euid) = profile->uid;
+    ksu_get_uid_t(cred->fsuid) = profile->uid;
 
-    cred->gid.val = profile->gid;
-    cred->fsgid.val = profile->gid;
-    cred->sgid.val = profile->gid;
-    cred->egid.val = profile->gid;
+    ksu_get_uid_t(cred->gid) = profile->gid;
+    ksu_get_uid_t(cred->fsgid) = profile->gid;
+    ksu_get_uid_t(cred->sgid) = profile->gid;
+    ksu_get_uid_t(cred->egid) = profile->gid;
     cred->securebits = 0;
 
     BUILD_BUG_ON(sizeof(profile->capabilities.effective) != sizeof(kernel_cap_t));
@@ -148,7 +182,11 @@ int escape_with_root_profile(void)
      * https://github.com/torvalds/linux/blob/v5.14/kernel/sys.c
      * https://github.com/torvalds/linux/blob/v5.14/kernel/cred.c
      */
+#if defined(KSU_HAS_MODERN_ALLOC_UID) || LINUX_VERSION_CODE >= KERNEL_VERSION(3, 5, 0)
     new_user = alloc_uid(cred->uid);
+#else
+    new_user = alloc_uid(current_user_ns(), cred->uid);
+#endif
     if (!new_user) {
         ret = -ENOMEM;
         goto out_abort_creds;
@@ -180,6 +218,12 @@ int escape_with_root_profile(void)
     commit_creds(cred);
 
     disable_seccomp();
+
+#ifdef CONFIG_KSU_TRACEPOINT_HOOK
+    for_each_thread (p, t) {
+        ksu_set_task_tracepoint_flag(t);
+    }
+#endif
 
     setup_mount_ns(profile->namespaces);
     ksu_put_root_profile(profile);

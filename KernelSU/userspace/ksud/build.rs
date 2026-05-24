@@ -1,8 +1,4 @@
-use std::env;
-use std::fs::File;
-use std::io::Write;
-use std::path::Path;
-use std::process::Command;
+use std::{env, fs::File, io::Write, path::Path, process::Command};
 
 fn get_git_version() -> Result<(u32, String), std::io::Error> {
     let output = Command::new("git")
@@ -15,7 +11,7 @@ fn get_git_version() -> Result<(u32, String), std::io::Error> {
         .trim()
         .parse()
         .map_err(|_| std::io::Error::other("Failed to parse git count"))?;
-    let version_code = 29971 + version_code;
+    let version_code = 30000 + 700 + version_code; // For historical reasons
 
     let version_name = String::from_utf8(
         Command::new("git")
@@ -23,7 +19,7 @@ fn get_git_version() -> Result<(u32, String), std::io::Error> {
             .output()?
             .stdout,
     )
-    .map_err(|_| std::io::Error::other("Failed to read git describe stdout"))?;
+    .map_err(|_| std::io::Error::other("Failed to parse git count"))?;
     let version_name = version_name.trim_start_matches('v').to_string();
     Ok((version_code, version_name))
 }
@@ -36,7 +32,7 @@ fn configure_bindgen() {
         // The input header we would like to generate
         // bindings for.
         .header("src/ksu_uapi.h")
-        .clang_args(["-x", "c++", "-I../../", "-D__BINDGEN__"])
+        .clang_args(["-x", "c++", "-I../../"])
         // Tell cargo to invalidate the built crate whenever any of the
         // included header files changed.
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))

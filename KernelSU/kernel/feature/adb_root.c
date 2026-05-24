@@ -1,4 +1,30 @@
+#include <asm/ptrace.h>
+#include <linux/namei.h>
+#include <linux/path.h>
+#include <linux/printk.h>
+#include <linux/types.h>
+#include <linux/string.h>
+#include <linux/uaccess.h>
+#include <linux/ptrace.h>
+#include <linux/static_key.h>
+#include <linux/slab.h>
+
+#include "adb_root.h"
+#include "arch.h"
+#include "policy/feature.h"
+#include "selinux/selinux.h"
+#ifndef CONFIG_KSU_TRACEPOINT_HOOK
+#include "runtime/ksud.h" // for user_arg_ptr
+#endif
+#include "compat/kernel_compat.h"
+
+#include "klog.h" // IWYU pragma: keep
+
+#ifdef KSU_COMPAT_USE_STATIC_KEY
+DEFINE_STATIC_KEY_FALSE(ksu_adb_root);
+#else
 bool ksu_adb_root __read_mostly = false;
+#endif
 
 static const char kAdbd[] = "/adbd";
 static const size_t kAdbdLen = sizeof(kAdbd) - 1;
@@ -14,7 +40,31 @@ static inline long is_exec_adbd(const char *filename)
     return 1;
 }
 
-static long is_libadbroot_ok(void)
+#ifdef CONFIG_KSU_TRACEPOINT_HOOK
+static long is_exec_adbd_tracepoint(struct pt_regs *regs)
+{
+    char __user *filename_user = (char __user *)PT_REGS_PARM1(regs);
+    // should be bigger than `/apex/com.android.adbd/bin/adbd`
+    char buf[40];
+    char __user *fn;
+    long ret;
+    fn = (char __user *)untagged_addr((unsigned long)filename_user);
+    memset(buf, 0, sizeof(buf));
+
+    ret = strncpy_from_user(buf, fn, sizeof(buf));
+    if (ret < 0) {
+        pr_warn("Access filename when adb_root_handle_execve failed: %ld\n", ret);
+        return ret;
+    }
+    // strncpy_from_user may copy `sizeof(buf)` bytes
+    if (ret < kAdbdLen || ret >= sizeof(buf))
+        return 0;
+
+    return is_exec_adbd(buf);
+}
+#endif
+
+static long is_libadbroot_ok()
 {
     static const char kLibAdbRoot[] = "/data/adb/ksu/lib/libadbroot.so";
     struct path path;
@@ -41,7 +91,11 @@ static long setup_ld_preload(void ***envp_arg)
     static const char kLdLibraryPath[] = "LD_LIBRARY_PATH=/data/adb/ksu/lib";
     static const size_t kReadEnvBatch = 16;
     static const size_t kPtrSize = sizeof(unsigned long);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0) || defined(current_user_stack_pointer)
     unsigned long stackp = current_user_stack_pointer();
+#else
+    volatile unsigned long stackp = current->mm->start_stack; // its just a stack smash in the end, it'll work.
+#endif
     unsigned long envp, ld_preload_p, ld_library_path_p;
 
     unsigned long *envp_p = (unsigned long *)envp_arg;
@@ -135,6 +189,42 @@ out_release_env_p:
     return ret;
 }
 
+#ifdef CONFIG_KSU_TRACEPOINT_HOOK
+static long setup_ld_preload_tracepoint(struct pt_regs *regs)
+{
+    return setup_ld_preload((void ***)&PT_REGS_PARM3(regs));
+}
+
+static long do_ksu_adb_root_handle_execve(struct pt_regs *regs)
+{
+    if (likely(is_exec_adbd_tracepoint(regs) != 1)) {
+        return 0;
+    }
+
+    if (unlikely(is_libadbroot_ok() != 1)) {
+        return 0;
+    }
+
+    long ret = setup_ld_preload_tracepoint(regs);
+    if (ret) {
+        return ret;
+    }
+
+    pr_info("escape to root for adb\n");
+    escape_to_root_for_adb_root();
+    return 0;
+}
+
+long ksu_adb_root_handle_execve_tracepoint(struct pt_regs *regs)
+{
+    // Tracepoint Syscall Redirect hook always in GKI2
+    // So there no need to check for modern static key interface
+    if (static_branch_unlikely(&ksu_adb_root)) {
+        return do_ksu_adb_root_handle_execve(regs);
+    }
+    return 0;
+}
+#else
 static long do_ksu_adb_root_handle_execve(const char *filename, struct user_arg_ptr *envp)
 {
     if (likely(is_exec_adbd(filename) != 1)) {
@@ -157,26 +247,41 @@ static long do_ksu_adb_root_handle_execve(const char *filename, struct user_arg_
 
 long ksu_adb_root_handle_execve_manual(const char *filename, struct user_arg_ptr *envp)
 {
-    if (!filename) {
-	return -EINVAL;
+#ifdef KSU_COMPAT_USE_STATIC_KEY
+    if (static_branch_unlikely(&ksu_adb_root)) {
+        return do_ksu_adb_root_handle_execve(filename, envp);
     }
-
+#else
     if (unlikely(ksu_adb_root)) {
         return do_ksu_adb_root_handle_execve(filename, envp);
     }
+#endif
     return 0;
 }
+#endif
 
 static int kernel_adb_root_feature_get(u64 *value)
 {
+#ifdef KSU_COMPAT_USE_STATIC_KEY
+    *value = static_key_enabled(&ksu_adb_root) ? 1 : 0;
+#else
     *value = ksu_adb_root ? 1 : 0;
+#endif
     return 0;
 }
 
 static int kernel_adb_root_feature_set(u64 value)
 {
     bool enable = value != 0;
+#ifdef KSU_COMPAT_USE_STATIC_KEY
+    if (enable) {
+        static_key_enable(&ksu_adb_root.key);
+    } else {
+        static_key_disable(&ksu_adb_root.key);
+    }
+#else
     ksu_adb_root = enable;
+#endif
     pr_info("adb_root: set to %d\n", enable);
     return 0;
 }

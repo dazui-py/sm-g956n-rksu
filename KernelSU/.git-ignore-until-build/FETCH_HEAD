@@ -1,0 +1,6 @@
+6ee2f7fd5b3ff0a936cd39f88c9eacab698afc29		branch 'main' of https://github.com/ReSukiSU/ReSukiSU
+7ee616c11f05c318f448d9677556a26c304beb50	not-for-merge	branch 'bot' of https://github.com/ReSukiSU/ReSukiSU
+26be4ada99715897747a349f531849f078defa4a	not-for-merge	branch 'cleanup' of https://github.com/ReSukiSU/ReSukiSU
+dd91114dce5b22cf83cf59e0995b18fce7295a35	not-for-merge	branch 'handle-backport-5.10-selinux' of https://github.com/ReSukiSU/ReSukiSU
+70ed283a72b57a3011e451459564e54f2c2e0467	not-for-merge	branch 'setup-submodule' of https://github.com/ReSukiSU/ReSukiSU
+91e72e60c83ae7ad0690811350f63a6abd09971b	not-for-merge	branch 'susfs-ksud' of https://github.com/ReSukiSU/ReSukiSU
