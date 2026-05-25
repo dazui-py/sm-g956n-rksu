@@ -1228,17 +1228,36 @@ def to_twos_compl(x, nbits):
     return x
 
 def byte_string(xs):
+    if isinstance(xs, int):
+        if not (0 <= xs <= 0xffffffff):
+            raise ValueError("instruction integer out of 32-bit range: %r" % (xs,))
+        return xs.to_bytes(4, byteorder="big")
+
     if isinstance(xs, bytes):
+        if len(xs) != 4:
+            raise ValueError("instruction bytes must be 4 bytes, got %d" % len(xs))
         return xs
+
     if isinstance(xs, bytearray):
-        return bytes(xs)
+        xs = bytes(xs)
+        if len(xs) != 4:
+            raise ValueError("instruction bytearray must be 4 bytes, got %d" % len(xs))
+        return xs
+
     if isinstance(xs, str):
-        return xs.encode("latin-1")
+        xs = xs.encode("latin-1")
+        if len(xs) != 4:
+            raise ValueError("instruction string must be 4 bytes, got %d" % len(xs))
+        return xs
 
     try:
-        return bytes(xs)
+        xs = bytes(xs)
     except TypeError:
-        return ''.join(xs).encode("latin-1")
+        xs = ''.join(xs).encode("latin-1")
+
+    if len(xs) != 4:
+        raise ValueError("instruction must be 4 bytes, got %d" % len(xs))
+    return xs
 
 def hexint(b):
     return int(binascii.hexlify(byte_string(b)), 16)
