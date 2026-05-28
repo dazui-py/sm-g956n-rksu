@@ -109,7 +109,7 @@ jobs:
           cd "$KERNEL_ROOT"
           python3 -m lib2to3 -w scripts/rkp_cfp
           grep -RsnE '^[[:space:]]*print [^(\n]' scripts/rkp_cfp || true
-          $(realpath $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+          echo $(realpath $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
       - name: Build kernel
         run: |
